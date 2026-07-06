@@ -1,0 +1,8 @@
+allowBuilds:
+  '@firebase/util': true
+  '@google/genai': true
+  '@heroui/shared-utils': true
+  esbuild: true
+  protobufjs: true
+minimumReleaseAgeExclude:
+  - react-hook-form@7.81.0

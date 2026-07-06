@@ -1,0 +1,184 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function currentUser() {
+      return get(userPath());
+    }
+
+    function isActiveUser() {
+      return signedIn()
+        && exists(userPath())
+        && currentUser().data.globalStatus != 'disabled';
+    }
+
+    function isPlatformAdmin() {
+      return isActiveUser() && currentUser().data.role == 'admin';
+    }
+
+    function memberPath(orgId) {
+      return /databases/$(database)/documents/organizationMembers/$(orgId + '_' + request.auth.uid);
+    }
+
+    function isOrgMember(orgId) {
+      return isActiveUser()
+        && exists(memberPath(orgId))
+        && get(memberPath(orgId)).data.status == 'active';
+    }
+
+    function hasOrgPermission(orgId, permission) {
+      return isOrgMember(orgId)
+        && get(memberPath(orgId)).data.effectivePermissions.hasAny([permission]);
+    }
+
+    function immutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    match /users/{userId} {
+      allow read: if isActiveUser() && request.auth.uid == userId;
+      allow update: if isActiveUser()
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['defaultOrganizationId', 'lastLoginAt', 'updatedAt']);
+      allow create, delete: if false;
+    }
+
+    match /organizations/{orgId} {
+      allow create: if isPlatformAdmin()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.status == 'active';
+
+      allow read: if hasOrgPermission(orgId, 'organizations.read');
+
+      allow update: if hasOrgPermission(orgId, 'organizations.update')
+        && immutableFieldsUnchanged(['createdBy', 'createdAt']);
+
+      allow delete: if false;
+    }
+
+    match /organizationMembers/{memberId} {
+      allow create: if isPlatformAdmin()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'active'
+        && request.resource.data.roleIds.hasOnly(['owner']);
+
+      allow read: if isOrgMember(resource.data.organizationId);
+
+      allow update: if hasOrgPermission(resource.data.organizationId, 'members.update')
+        && immutableFieldsUnchanged([
+          'organizationId',
+          'userId',
+          'createdAt',
+          'effectivePermissions'
+        ]);
+
+      allow delete: if hasOrgPermission(resource.data.organizationId, 'members.remove');
+    }
+
+    match /roles/{roleId} {
+      allow read: if hasOrgPermission(resource.data.organizationId, 'roles.read');
+      allow create: if hasOrgPermission(request.resource.data.organizationId, 'roles.manage');
+      allow update: if hasOrgPermission(resource.data.organizationId, 'roles.manage')
+        && immutableFieldsUnchanged(['organizationId', 'createdAt']);
+      allow delete: if hasOrgPermission(resource.data.organizationId, 'roles.manage');
+    }
+
+    match /projects/{projectId} {
+      allow create: if hasOrgPermission(request.resource.data.organizationId, 'projects.create')
+        && request.resource.data.createdBy is string
+        && request.resource.data.createdAt is int
+        && request.resource.data.updatedAt is int;
+
+      allow read: if hasOrgPermission(resource.data.organizationId, 'projects.read')
+        || (isPlatformAdmin() && !('organizationId' in resource.data));
+
+      allow update: if (
+          hasOrgPermission(resource.data.organizationId, 'projects.update')
+          && immutableFieldsUnchanged(['organizationId', 'createdBy', 'createdAt'])
+        ) || (
+          isPlatformAdmin()
+          && !('organizationId' in resource.data)
+          && request.resource.data.organizationId is string
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.createdAt == resource.data.createdAt
+        );
+
+      allow delete: if hasOrgPermission(resource.data.organizationId, 'projects.delete')
+        || (isPlatformAdmin() && !('organizationId' in resource.data));
+    }
+
+    match /environments/{environmentId} {
+      allow create: if hasOrgPermission(request.resource.data.organizationId, 'environments.create');
+      allow read: if hasOrgPermission(resource.data.organizationId, 'environments.read');
+      allow update: if hasOrgPermission(resource.data.organizationId, 'environments.update')
+        && immutableFieldsUnchanged(['organizationId', 'projectId', 'createdBy', 'createdAt']);
+      allow delete: if hasOrgPermission(resource.data.organizationId, 'environments.delete');
+    }
+
+    match /variables/{variableId} {
+      allow create: if hasOrgPermission(request.resource.data.organizationId, 'variables.create')
+        && !('value' in request.resource.data)
+        && 'encryptedValue' in request.resource.data;
+
+      allow read: if hasOrgPermission(resource.data.organizationId, 'variables.read');
+
+      allow update: if hasOrgPermission(resource.data.organizationId, 'variables.update')
+        && immutableFieldsUnchanged([
+          'organizationId',
+          'projectId',
+          'environmentId',
+          'createdBy',
+          'createdAt'
+        ])
+        && !('value' in request.resource.data);
+
+      allow delete: if hasOrgPermission(resource.data.organizationId, 'variables.delete');
+    }
+
+    match /auditLogs/{auditLogId} {
+      allow read: if hasOrgPermission(resource.data.organizationId, 'audit.read');
+      allow create, update, delete: if false;
+    }
+
+    match /variableVersions/{versionId} {
+      allow read: if hasOrgPermission(resource.data.organizationId, 'variables.read');
+      allow create, update, delete: if false;
+    }
+
+    match /activity/{activityId} {
+      allow read: if hasOrgPermission(resource.data.organizationId, 'organizations.read');
+      allow create, update, delete: if false;
+    }
+
+    match /invitations/{invitationId} {
+      allow read: if hasOrgPermission(resource.data.organizationId, 'members.invite');
+      allow create, update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read, update: if isActiveUser()
+        && resource.data.recipientUserId == request.auth.uid;
+      allow create, delete: if false;
+    }
+
+    match /importJobs/{jobId} {
+      allow read: if hasOrgPermission(resource.data.organizationId, 'imports.preview');
+      allow create: if hasOrgPermission(request.resource.data.organizationId, 'imports.run');
+      allow update, delete: if false;
+    }
+
+    match /exportJobs/{jobId} {
+      allow read: if hasOrgPermission(resource.data.organizationId, 'exports.preview');
+      allow create: if hasOrgPermission(request.resource.data.organizationId, 'exports.run');
+      allow update, delete: if false;
+    }
+  }
+}
