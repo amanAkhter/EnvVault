@@ -1,12 +1,12 @@
 import { collection, getDocs, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
-import { db } from './base-repository';
-import { generateMasterKey, wrapDEK, generateDEK } from '../encryption/crypto-service';
+import { db } from '../../firebase/config';
+import { getMasterKey, wrapDEK, generateEncryptionKey } from '../crypto/encryption';
 
 export const migrateLegacyProjects = async (userId: string, organizationId: string) => {
   const projectsRef = collection(db, 'projects');
   const snapshot = await getDocs(projectsRef);
 
-  const masterKey = await generateMasterKey(userId);
+  const masterKey = await getMasterKey(userId);
   let migratedCount = 0;
 
   for (const projectDoc of snapshot.docs) {
@@ -22,7 +22,7 @@ export const migrateLegacyProjects = async (userId: string, organizationId: stri
       // It's a legacy project owned by this user
       
       // 1. Generate DEK for the project
-      const dek = await generateDEK();
+      const dek = await generateEncryptionKey();
       const wrappedDEK = await wrapDEK(dek, masterKey);
       
       // 2. Update the project document

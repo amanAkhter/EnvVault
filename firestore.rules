@@ -1,6 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ── Identity helpers ────────────────────────────────────────────────────
     function signedIn() {
       return request.auth != null;
     }
@@ -23,25 +25,57 @@ service cloud.firestore {
       return isActiveUser() && currentUser().data.role == 'admin';
     }
 
+    // ── Membership & permission helpers ─────────────────────────────────────
     function memberPath(orgId) {
       return /databases/$(database)/documents/organizationMembers/$(orgId + '_' + request.auth.uid);
+    }
+
+    function memberDoc(orgId) {
+      return get(memberPath(orgId)).data;
     }
 
     function isOrgMember(orgId) {
       return isActiveUser()
         && exists(memberPath(orgId))
-        && get(memberPath(orgId)).data.status == 'active';
+        && memberDoc(orgId).status == 'active';
     }
 
     function hasOrgPermission(orgId, permission) {
       return isOrgMember(orgId)
-        && get(memberPath(orgId)).data.effectivePermissions.hasAny([permission]);
+        && memberDoc(orgId).effectivePermissions.hasAny([permission]);
+    }
+
+    function hasRole(orgId, roles) {
+      return isOrgMember(orgId) && memberDoc(orgId).roleIds.hasAny(roles);
+    }
+
+    // Roles cleared for production-grade (sensitive) environments.
+    function productionClearedRoles() {
+      return ['owner', 'admin', 'devops'];
     }
 
     function immutableFieldsUnchanged(fields) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
     }
 
+    // ── Environment-level access ─────────────────────────────────────────────
+    // A variable's environment tier gates who can read/write it. Sensitive
+    // tiers (production/staging) require a production-cleared role.
+    function envPath(environmentId) {
+      return /databases/$(database)/documents/environments/$(environmentId);
+    }
+
+    function envIsSensitive(environmentId) {
+      return exists(envPath(environmentId))
+        && get(envPath(environmentId)).data.type in ['production', 'staging'];
+    }
+
+    function canAccessEnv(orgId, environmentId) {
+      return isOrgMember(orgId)
+        && (!envIsSensitive(environmentId) || hasRole(orgId, productionClearedRoles()));
+    }
+
+    // ── Users ────────────────────────────────────────────────────────────────
     match /users/{userId} {
       allow read: if isActiveUser() && request.auth.uid == userId;
       allow update: if isActiveUser()
@@ -51,6 +85,7 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
+    // ── Organizations ─────────────────────────────────────────────────────────
     match /organizations/{orgId} {
       allow create: if isPlatformAdmin()
         && request.resource.data.createdBy == request.auth.uid
@@ -64,11 +99,18 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── Organization members ───────────────────────────────────────────────────
     match /organizationMembers/{memberId} {
-      allow create: if isPlatformAdmin()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.status == 'active'
-        && request.resource.data.roleIds.hasOnly(['owner']);
+      // Bootstrap: a platform admin provisions their own owner membership.
+      allow create: if (isPlatformAdmin()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.status == 'active'
+          && request.resource.data.roleIds.hasOnly(['owner']))
+        // Invite acceptance: the invited user creates their own membership.
+        || (isActiveUser()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.status == 'active'
+          && !request.resource.data.roleIds.hasAny(['owner']));
 
       allow read: if isOrgMember(resource.data.organizationId);
 
@@ -76,13 +118,13 @@ service cloud.firestore {
         && immutableFieldsUnchanged([
           'organizationId',
           'userId',
-          'createdAt',
-          'effectivePermissions'
+          'createdAt'
         ]);
 
       allow delete: if hasOrgPermission(resource.data.organizationId, 'members.remove');
     }
 
+    // ── Roles (custom role definitions) ────────────────────────────────────────
     match /roles/{roleId} {
       allow read: if hasOrgPermission(resource.data.organizationId, 'roles.read');
       allow create: if hasOrgPermission(request.resource.data.organizationId, 'roles.manage');
@@ -91,6 +133,7 @@ service cloud.firestore {
       allow delete: if hasOrgPermission(resource.data.organizationId, 'roles.manage');
     }
 
+    // ── Projects ───────────────────────────────────────────────────────────────
     match /projects/{projectId} {
       allow create: if hasOrgPermission(request.resource.data.organizationId, 'projects.create')
         && request.resource.data.createdBy is string
@@ -115,6 +158,7 @@ service cloud.firestore {
         || (isPlatformAdmin() && !('organizationId' in resource.data));
     }
 
+    // ── Environments ───────────────────────────────────────────────────────────
     match /environments/{environmentId} {
       allow create: if hasOrgPermission(request.resource.data.organizationId, 'environments.create');
       allow read: if hasOrgPermission(resource.data.organizationId, 'environments.read');
@@ -123,14 +167,18 @@ service cloud.firestore {
       allow delete: if hasOrgPermission(resource.data.organizationId, 'environments.delete');
     }
 
+    // ── Variables ──────────────────────────────────────────────────────────────
     match /variables/{variableId} {
       allow create: if hasOrgPermission(request.resource.data.organizationId, 'variables.create')
+        && canAccessEnv(request.resource.data.organizationId, request.resource.data.environmentId)
         && !('value' in request.resource.data)
         && 'encryptedValue' in request.resource.data;
 
-      allow read: if hasOrgPermission(resource.data.organizationId, 'variables.read');
+      allow read: if hasOrgPermission(resource.data.organizationId, 'variables.read')
+        && canAccessEnv(resource.data.organizationId, resource.data.environmentId);
 
       allow update: if hasOrgPermission(resource.data.organizationId, 'variables.update')
+        && canAccessEnv(resource.data.organizationId, resource.data.environmentId)
         && immutableFieldsUnchanged([
           'organizationId',
           'projectId',
@@ -140,35 +188,66 @@ service cloud.firestore {
         ])
         && !('value' in request.resource.data);
 
-      allow delete: if hasOrgPermission(resource.data.organizationId, 'variables.delete');
+      allow delete: if hasOrgPermission(resource.data.organizationId, 'variables.delete')
+        && canAccessEnv(resource.data.organizationId, resource.data.environmentId);
     }
 
+    // ── Variable versions (immutable history) ──────────────────────────────────
+    match /versions/{versionId} {
+      allow read: if hasOrgPermission(resource.data.organizationId, 'variables.read');
+      allow create: if hasOrgPermission(request.resource.data.organizationId, 'variables.update')
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ── Audit logs (append-only) ───────────────────────────────────────────────
     match /auditLogs/{auditLogId} {
       allow read: if hasOrgPermission(resource.data.organizationId, 'audit.read');
-      allow create, update, delete: if false;
+      allow create: if isOrgMember(request.resource.data.organizationId)
+        && request.resource.data.actorId == request.auth.uid;
+      allow update, delete: if false;
     }
 
-    match /variableVersions/{versionId} {
-      allow read: if hasOrgPermission(resource.data.organizationId, 'variables.read');
-      allow create, update, delete: if false;
-    }
-
+    // ── Activity feed (server-written) ─────────────────────────────────────────
     match /activity/{activityId} {
       allow read: if hasOrgPermission(resource.data.organizationId, 'organizations.read');
       allow create, update, delete: if false;
     }
 
+    // ── Invitations ────────────────────────────────────────────────────────────
     match /invitations/{invitationId} {
-      allow read: if hasOrgPermission(resource.data.organizationId, 'members.invite');
-      allow create, update, delete: if false;
+      // Members with invite permission can read org invitations; an invited user
+      // may read invitations addressed to their own email.
+      allow read: if hasOrgPermission(resource.data.organizationId, 'members.invite')
+        || (isActiveUser() && resource.data.email == currentUser().data.email);
+
+      allow create: if hasOrgPermission(request.resource.data.organizationId, 'members.invite')
+        && request.resource.data.status == 'pending'
+        && request.resource.data.invitedBy == request.auth.uid;
+
+      // Invite managers can revoke; the invited user can accept (status only).
+      allow update: if hasOrgPermission(resource.data.organizationId, 'members.invite')
+        || (isActiveUser()
+          && resource.data.email == currentUser().data.email
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'acceptedAt']));
+
+      allow delete: if false;
     }
 
+    // ── Notifications (per-user) ───────────────────────────────────────────────
     match /notifications/{notificationId} {
-      allow read, update: if isActiveUser()
-        && resource.data.recipientUserId == request.auth.uid;
-      allow create, delete: if false;
+      allow read: if isActiveUser() && resource.data.userId == request.auth.uid;
+      // Any active org member may enqueue a notification for another member.
+      allow create: if isOrgMember(request.resource.data.organizationId);
+      // Recipients may only flip the read flag.
+      allow update: if isActiveUser()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow delete: if false;
     }
 
+    // ── Import / export jobs ───────────────────────────────────────────────────
     match /importJobs/{jobId} {
       allow read: if hasOrgPermission(resource.data.organizationId, 'imports.preview');
       allow create: if hasOrgPermission(request.resource.data.organizationId, 'imports.run');
@@ -179,6 +258,42 @@ service cloud.firestore {
       allow read: if hasOrgPermission(resource.data.organizationId, 'exports.preview');
       allow create: if hasOrgPermission(request.resource.data.organizationId, 'exports.run');
       allow update, delete: if false;
+    }
+
+    // ── User public keys (CLI asymmetric key registry) ─────────────────────────
+    // Registered via the `registerUserKey` callable (Admin SDK). Clients may read
+    // any active user's PUBLIC key to wrap DEKs, but never write here directly.
+    match /userKeys/{userId} {
+      allow read: if isActiveUser();
+      allow create, update, delete: if false; // callable functions only
+    }
+
+    // ── Environment members (per-user env access + wrapped DEK) ────────────────
+    // Written only by callable functions (add/remove user, fetch sync stamp).
+    // A user may read their own membership rows; admins can read the org's rows.
+    match /environmentMembers/{memberId} {
+      allow read: if isActiveUser()
+        && (resource.data.userId == request.auth.uid
+            || hasRole(resource.data.organizationId, productionClearedRoles()));
+      allow create, update, delete: if false; // callable functions only
+    }
+
+    // ── Environment key versions ───────────────────────────────────────────────
+    match /environmentKeys/{environmentId} {
+      allow read: if isOrgMember(resource.data.organizationId);
+      allow create, update, delete: if false; // callable functions only
+    }
+
+    // ── CLI sessions ───────────────────────────────────────────────────────────
+    // Refresh tokens are only ever stored as hashes, and only by the server.
+    match /cliSessions/{sessionId} {
+      allow read: if isActiveUser() && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false; // callable functions only
+    }
+
+    // ── Default deny ───────────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

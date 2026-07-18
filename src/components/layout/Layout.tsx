@@ -9,10 +9,13 @@ import { Menu } from 'lucide-react';
 import { AppSidebar } from './AppSidebar';
 import { CommandPalette } from './CommandPalette';
 import { Breadcrumbs } from './Breadcrumbs';
+import { NotificationBell } from './NotificationBell';
 import { Button } from '../ui/button';
+import { useSessionTimeout } from '../../features/auth/hooks/useSessionTimeout';
 
 export const Layout = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  useSessionTimeout();
 
   return (
     <div className="min-h-screen bg-background text-foreground flex">
@@ -27,10 +30,18 @@ export const Layout = () => {
             <Menu size={20} />
           </Button>
           <span className="ml-3 font-semibold">EnvVault</span>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </div>
-        
+
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <Breadcrumbs />
+          <div className="flex items-center justify-between gap-4">
+            <Breadcrumbs />
+            <div className="hidden lg:block">
+              <NotificationBell />
+            </div>
+          </div>
           <Outlet />
         </div>
       </main>

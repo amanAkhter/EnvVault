@@ -1,4 +1,16 @@
-import { signInWithPopup, signOut as firebaseSignOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import {
+  signInWithPopup,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+  sendPasswordResetEmail,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  type ConfirmationResult,
+  User as FirebaseUser,
+} from 'firebase/auth';
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../../../firebase/config';
 import { useAuthStore } from '../store/authStore';
@@ -25,6 +37,100 @@ export const loginWithGoogle = async () => {
     }
     console.error('Login error:', error);
     throw new AuthError('Sign-in failed. Please try again.');
+  }
+};
+
+// ── Email / Password ──────────────────────────────────────────────────────
+
+/** Map Firebase auth error codes to friendly, non-leaky messages. */
+const mapAuthError = (code: string): string => {
+  switch (code) {
+    case 'auth/invalid-email':
+      return 'That email address is not valid.';
+    case 'auth/email-already-in-use':
+      return 'An account with this email already exists.';
+    case 'auth/weak-password':
+      return 'Password must be at least 6 characters.';
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return 'Incorrect email or password.';
+    case 'auth/too-many-requests':
+      return 'Too many attempts. Try again later.';
+    case 'auth/invalid-phone-number':
+      return 'That phone number is not valid.';
+    case 'auth/invalid-verification-code':
+      return 'The verification code is incorrect.';
+    case 'auth/code-expired':
+      return 'The verification code has expired. Request a new one.';
+    default:
+      return 'Authentication failed. Please try again.';
+  }
+};
+
+export const signUpWithEmail = async (name: string, email: string, password: string) => {
+  try {
+    const result = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    if (name.trim()) {
+      await updateProfile(result.user, { displayName: name.trim() });
+    }
+    return result.user;
+  } catch (error: any) {
+    throw new AuthError(mapAuthError(error?.code ?? ''));
+  }
+};
+
+export const loginWithEmail = async (email: string, password: string) => {
+  try {
+    const result = await signInWithEmailAndPassword(auth, email.trim(), password);
+    return result.user;
+  } catch (error: any) {
+    throw new AuthError(mapAuthError(error?.code ?? ''));
+  }
+};
+
+export const resetPassword = async (email: string) => {
+  try {
+    await sendPasswordResetEmail(auth, email.trim());
+  } catch (error: any) {
+    throw new AuthError(mapAuthError(error?.code ?? ''));
+  }
+};
+
+// ── Phone (SMS OTP) ─────────────────────────────────────────────────────────
+
+/**
+ * Create an invisible reCAPTCHA verifier bound to a container element.
+ * Firebase requires this before sending an SMS code.
+ */
+export const createRecaptcha = (containerId: string): RecaptchaVerifier =>
+  new RecaptchaVerifier(auth, containerId, { size: 'invisible' });
+
+/**
+ * Send an SMS verification code. Returns a ConfirmationResult whose
+ * `.confirm(code)` completes the sign-in.
+ */
+export const startPhoneSignIn = async (
+  phoneE164: string,
+  verifier: RecaptchaVerifier,
+): Promise<ConfirmationResult> => {
+  try {
+    return await signInWithPhoneNumber(auth, phoneE164, verifier);
+  } catch (error: any) {
+    throw new AuthError(mapAuthError(error?.code ?? ''));
+  }
+};
+
+/** Confirm the SMS code against a prior ConfirmationResult. */
+export const confirmPhoneCode = async (
+  confirmation: ConfirmationResult,
+  code: string,
+) => {
+  try {
+    const result = await confirmation.confirm(code);
+    return result.user;
+  } catch (error: any) {
+    throw new AuthError(mapAuthError(error?.code ?? ''));
   }
 };
 

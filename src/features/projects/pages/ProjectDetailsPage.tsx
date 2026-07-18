@@ -283,6 +283,7 @@ export const ProjectDetailsPage = () => {
             <VariableEditor
               project={project}
               environment={activeEnvironment}
+              environments={environments}
             />
           )
         ) : (

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import { Organization, OrganizationMember, Permission, User } from '../../../types';
+import { Organization, OrganizationMember, OrganizationRole, Permission, User, EnvironmentType } from '../../../types';
 import { hasPermission } from '../services/permissions';
+import { canAccessEnvironmentType } from '../services/environment-access';
 
 interface AuthState {
   user: User | null;
@@ -18,6 +19,8 @@ interface AuthState {
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   can: (permission: Permission) => boolean;
+  roles: () => OrganizationRole[];
+  canAccessEnv: (type: EnvironmentType) => boolean;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -48,5 +51,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       (item: OrganizationMember) => item.organizationId === activeOrganization.id && item.status === 'active',
     );
     return hasPermission(membership?.effectivePermissions, permission);
+  },
+  roles: (): OrganizationRole[] => {
+    const { activeOrganization, memberships } = get();
+    if (!activeOrganization) return [];
+    const membership = memberships.find(
+      (item: OrganizationMember) => item.organizationId === activeOrganization.id && item.status === 'active',
+    );
+    return membership?.roleIds ?? [];
+  },
+  canAccessEnv: (type): boolean => {
+    return canAccessEnvironmentType(get().roles(), type);
   },
 }));

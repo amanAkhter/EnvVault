@@ -8,6 +8,7 @@ import { lazy, Suspense } from 'react';
 import { AuthGuard } from '../features/auth/components/AuthGuard';
 import { LoginPage } from '../features/auth/pages/LoginPage';
 import { UnauthorizedPage } from '../features/auth/pages/UnauthorizedPage';
+import { AcceptInvitePage } from '../features/auth/pages/AcceptInvitePage';
 import { Layout } from '../components/layout/Layout';
 import { NotFoundPage } from '../app/NotFoundPage';
 import { Loader2 } from 'lucide-react';
@@ -60,6 +61,10 @@ export const router = createBrowserRouter([
   {
     path: '/unauthorized',
     element: <UnauthorizedPage />,
+  },
+  {
+    path: '/accept-invite',
+    element: <AcceptInvitePage />,
   },
   {
     path: '/',

@@ -14,9 +14,20 @@ Think of it as an open-core alternative to Doppler, Infisical, or Hashicorp Vaul
 - **Project & Workspace Management:** Organize your configuration by organizations and specific projects.
 - **Environment Handling:** Create and manage distinct environments (e.g., Development, Staging, Production) effortlessly.
 - **Client-Side Encryption:** Deeply integrated security where DEKs (Data Encryption Keys) are wrapped, ensuring your secrets are encrypted before they hit the database.
+- **Version History & Rollback:** Immutable per-variable history; restore any prior value in one click.
+- **Environment Comparison & Health Score:** Fingerprint-based diff between environments and a configuration health report — all without decrypting secrets.
 - **Smart Import & Export:** Drag-and-drop parsing of `.env` and JSON formats with preview modes and immediate validations.
+- **Team Collaboration:** Email invitations, member management, and six-tier role-based access control.
+- **Environment-Level RBAC:** Production and staging secrets are gated to owner/admin/devops roles even when the org-wide reveal permission is granted.
+- **Step-up Security:** Google re-authentication before revealing production secrets, plus configurable idle session timeout.
+- **In-App Notifications:** A notification center for invites, member joins, and security events.
 - **Audit Logging:** Built-in tracking of who changed what and when, ensuring full accountability for production keys.
 - **Modern Tech Stack:** React 19, TypeScript, TailwindCSS v4, Vite, and Firebase.
+
+## 📚 Documentation
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design, data model, state flow.
+- [`docs/SECURITY.md`](docs/SECURITY.md) — threat model, encryption, RBAC, known trade-offs.
+- [`functions/README.md`](functions/README.md) — Cloud Functions design (not yet deployed).
 
 ## 🛠️ Technology Stack
 - **Frontend:** React 19, TypeScript
@@ -55,12 +66,39 @@ Think of it as an open-core alternative to Doppler, Infisical, or Hashicorp Vaul
    ```
    *Note: Our custom script automatically handles copying the correct environment config to `.env` based on the command you execute.*
 
+### Enable auth providers (Firebase Console)
+
+Under **Authentication → Sign-in method**, enable:
+- **Google**
+- **Email/Password**
+- **Phone** — add localhost + your domain to Authorized domains; add a test
+  number under Phone → *Phone numbers for testing* for local dev.
+
+### Invitation emails
+
+Invitation emails go through GitHub Actions → Resend (the Resend key is a repo
+secret, never bundled into the browser). See [`docs/EMAIL.md`](docs/EMAIL.md)
+for the one-time secret + PAT setup.
+
 ## 📜 Available Scripts
 
 - `pnpm run dev` — Starts the development server using the `.env.development` config.
 - `pnpm run dev:prod` — Starts the development server but connects to your production Firebase database (`.env.production`).
 - `pnpm run build` — Builds the production bundle using the production config.
 - `pnpm run build:dev` — Builds the bundle using the development config (useful for testing builds).
+
+## ☁️ Firebase Deployment
+
+Firestore rules and indexes are deploy-ready:
+
+```bash
+firebase deploy --only firestore        # rules + composite indexes
+firebase deploy --only hosting          # static app
+```
+
+Cloud Functions in `functions/` are a **design reference only** and are
+intentionally excluded from deploys until the backend milestone — see
+`functions/README.md` for the migration checklist.
 
 ## 🔒 Security Architecture
 EnvVault prioritizes the security of your variables:

@@ -1,0 +1,63 @@
+name: Send Invitation Email
+
+# Triggered from the app via GitHub's repository_dispatch API when an
+# organization invitation is created. The Resend API key lives ONLY as the
+# RESEND_API_KEY repository secret — it is never shipped to the browser.
+on:
+  repository_dispatch:
+    types: [send-invitation]
+
+# Allow manual test sends from the Actions tab.
+  workflow_dispatch:
+    inputs:
+      email:
+        description: Recipient email
+        required: true
+      organizationName:
+        description: Organization name
+        required: true
+      inviterName:
+        description: Inviter name
+        required: false
+        default: A teammate
+      role:
+        description: Role
+        required: false
+        default: developer
+      acceptUrl:
+        description: Accept invitation URL
+        required: true
+
+concurrency:
+  # Never run two sends for the same recipient at once.
+  group: invite-${{ github.event.client_payload.email || github.event.inputs.email }}
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Resend
+        run: npm install resend@^4.0.0 --no-save
+
+      - name: Send invitation email
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # Optional: verified sender. Falls back to Resend's shared onboarding address.
+          INVITE_FROM: ${{ secrets.INVITE_FROM }}
+          # repository_dispatch payload OR workflow_dispatch inputs.
+          INVITE_EMAIL: ${{ github.event.client_payload.email || github.event.inputs.email }}
+          INVITE_ORG: ${{ github.event.client_payload.organizationName || github.event.inputs.organizationName }}
+          INVITE_INVITER: ${{ github.event.client_payload.inviterName || github.event.inputs.inviterName }}
+          INVITE_ROLE: ${{ github.event.client_payload.role || github.event.inputs.role }}
+          INVITE_ACCEPT_URL: ${{ github.event.client_payload.acceptUrl || github.event.inputs.acceptUrl }}
+          INVITE_EXPIRES: ${{ github.event.client_payload.expiresAt }}
+        run: node .github/scripts/send-invitation.mjs
