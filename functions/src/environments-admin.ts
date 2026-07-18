@@ -133,8 +133,10 @@ export const updateEnvironment = onCall({ region: REGION }, async (request) => {
 });
 
 /**
- * deleteEnvironment — admin deletes an environment: soft-delete variables,
- * mark all members removed, delete the environment + key docs.
+ * deleteEnvironment — admin permanently deletes an environment and everything
+ * scoped to it: the environment document, every variable, every variable
+ * version, the key-version record, and all membership grants (including wrapped
+ * DEKs). This is a hard delete — nothing is recoverable afterwards.
  */
 export const deleteEnvironment = onCall({ region: REGION }, async (request) => {
   const { uid, email } = await requireActiveUser(request);
@@ -148,31 +150,46 @@ export const deleteEnvironment = onCall({ region: REGION }, async (request) => {
   });
   const environmentId = envSnap.id;
   const projectId = envSnap.data()!.projectId;
-  const now = Date.now();
 
-  const [members, vars] = await Promise.all([
+  const [members, vars, versions] = await Promise.all([
     db.collection('environmentMembers').where('environmentId', '==', environmentId).get(),
     db.collection('variables').where('environmentId', '==', environmentId).get(),
+    db.collection('versions').where('environmentId', '==', environmentId).get(),
   ]);
 
-  const batch = db.batch();
-  for (const m of members.docs) {
-    batch.update(m.ref, { status: 'removed', wrappedDEK: null, revokedBy: uid, revokedAt: now });
+  // Firestore batches cap at 500 writes; chunk deletes to stay under the limit.
+  const refs: FirebaseFirestore.DocumentReference[] = [
+    ...members.docs.map((d) => d.ref),
+    ...vars.docs.map((d) => d.ref),
+    ...versions.docs.map((d) => d.ref),
+    db.doc(`environmentKeys/${environmentId}`),
+    envSnap.ref,
+  ];
+
+  const CHUNK = 450;
+  for (let i = 0; i < refs.length; i += CHUNK) {
+    const batch = db.batch();
+    for (const ref of refs.slice(i, i + CHUNK)) batch.delete(ref);
+    await batch.commit();
   }
-  for (const v of vars.docs) {
-    if (v.data().isDeleted !== true) {
-      batch.update(v.ref, { isDeleted: true, deletedAt: now, deletedBy: uid, updatedAt: now });
-    }
-  }
-  batch.delete(db.doc(`environmentKeys/${environmentId}`));
-  batch.delete(envSnap.ref);
-  await batch.commit();
 
   await writeAudit(
-    { organizationId, projectId, environmentId, action: 'environment.deleted', actorId: uid, actorEmail: email, details: { revokedMembers: members.size } },
+    {
+      organizationId,
+      projectId,
+      environmentId,
+      action: 'environment.deleted',
+      actorId: uid,
+      actorEmail: email,
+      details: {
+        deletedVariables: vars.size,
+        deletedVersions: versions.size,
+        revokedMembers: members.size,
+      },
+    },
     request,
   );
-  return { ok: true };
+  return { ok: true, deletedVariables: vars.size, deletedVersions: versions.size };
 });
 
 /**

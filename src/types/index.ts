@@ -98,6 +98,8 @@ export interface OrganizationSecurity {
   sessionTimeoutMinutes: number;
   clipboardTimeoutSeconds: number;
   allowedIpRanges: string[];
+  /** When false, client-side audit logging is suppressed for this org. */
+  auditLoggingEnabled?: boolean;
 }
 
 export interface Organization {

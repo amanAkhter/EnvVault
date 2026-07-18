@@ -9,7 +9,6 @@ import { memberRepository, MemberRepository } from '../firestore/member-reposito
 import { getPermissionsForRoles } from '../../features/auth/services/permissions';
 import { logAuditEvent, type AuditContext } from '../audit/audit-service';
 import { notificationService } from '../notifications/notification-service';
-import { sendInvitationEmail } from '../notifications/email-service';
 import type {
   Invitation,
   OrganizationMember,
@@ -66,9 +65,8 @@ export const createInvitation = async (
     invitationId: invitation.id,
   });
 
-  // Fire the branded invitation email via the GitHub Actions → Resend pipeline.
-  // Best-effort: never blocks invite creation if the dispatch fails.
-  void sendInvitationEmail({ invitation, inviterName: params.invitedByName });
+  // The branded invitation email is sent server-side by the `onInvitationCreated`
+  // Cloud Function (Resend). No client dispatch needed.
 
   return invitation;
 };

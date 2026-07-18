@@ -34,6 +34,7 @@ import {
   Skeleton,
 } from '../../../components/ui/feedback';
 import { projectRepository, environmentRepository } from '../../../services/firestore';
+import { deleteEnvironmentFn } from '../../../services/functions';
 import { useAuthStore } from '../../auth/store/authStore';
 import type { Project, Environment } from '../../../types';
 import { VariableEditor } from '../../variables/components/VariableEditor';
@@ -102,15 +103,20 @@ export const ProjectDetailsPage = () => {
 
   const deleteEnvMutation = useMutation({
     mutationFn: async (envId: string) => {
-      if (!user) throw new Error('Not authenticated');
-      await environmentRepository.softDelete(envId, user.uid);
+      if (!user || !activeOrganization) throw new Error('Not authenticated');
+      await deleteEnvironmentFn({
+        organizationId: activeOrganization.id,
+        environmentId: envId,
+        projectId: projectId!,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['environments', projectId] });
-      toast.success('Environment deleted.');
+      queryClient.invalidateQueries({ queryKey: ['variables'] });
+      toast.success('Environment and all its variables deleted.');
       if (activeEnvId) setActiveEnvId(null);
     },
-    onError: () => toast.error('Failed to delete environment.'),
+    onError: (err) => toast.error((err as Error).message || 'Failed to delete environment.'),
   });
 
   const isLoading = projectLoading || envsLoading;

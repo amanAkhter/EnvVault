@@ -34,3 +34,9 @@ export {
 
 // Scheduled maintenance.
 export { cleanupStaleSync } from './scheduled';
+
+// Invitation email (Resend, server-side).
+export { onInvitationCreated } from './email-invitations';
+
+// CLI session management.
+export { revokeCliSession } from './cli-sessions';

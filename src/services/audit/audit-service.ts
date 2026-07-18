@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { auditLogRepository } from '../firestore/audit-repository';
+import { useAuthStore } from '../../features/auth/store/authStore';
 import type { AuditAction, AuditLog } from '../../types';
 
 export interface AuditContext {
@@ -17,14 +18,28 @@ export interface AuditContext {
 }
 
 /**
+ * Whether audit logging is enabled for the active organization. Defaults to
+ * true so absence of the flag (legacy orgs) keeps logging on.
+ */
+const isAuditLoggingEnabled = (organizationId: string): boolean => {
+  const org = useAuthStore.getState().activeOrganization;
+  if (org && org.id === organizationId) {
+    return org.security?.auditLoggingEnabled !== false;
+  }
+  return true;
+};
+
+/**
  * Log an action to the immutable audit trail.
  * Automatically captures IP (where available), user agent, and timestamp.
+ * Skips silently when the organization has disabled audit logging.
  */
 export const logAuditEvent = async (
   context: AuditContext,
   action: AuditAction,
   details: Record<string, unknown> = {},
 ): Promise<void> => {
+  if (!isAuditLoggingEnabled(context.organizationId)) return;
   try {
     const entry: Omit<AuditLog, 'id'> = {
       organizationId: context.organizationId,

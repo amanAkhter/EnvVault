@@ -81,7 +81,7 @@ service cloud.firestore {
       allow update: if isActiveUser()
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['defaultOrganizationId', 'lastLoginAt', 'updatedAt']);
+          .hasOnly(['name', 'photoURL', 'defaultOrganizationId', 'lastLoginAt', 'updatedAt']);
       allow create, delete: if false;
     }
 
